@@ -1,166 +1,214 @@
-// api.ts
+// src/services/api.ts
+import { StorageService } from './storage';
+import { Protein } from '../types';
+import axios from 'axios';
 
-import axios, { AxiosError } from 'axios';
-import { Protein, StructureData, ApiResponse } from '../types';
-
-const ALPHAFOLD_API = 'https://alphafold.ebi.ac.uk/api';
-const UNIPROT_API = 'https://rest.uniprot.org/uniprotkb';
-
-// Custom error class for API errors
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public statusCode?: number,
-    public response?: any
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-// Type for UniProt API response
-interface UniProtResponse {
-  results: Array<{
-    primaryAccession: string;
-    protein: {
-      recommendedName?: {
-        fullName?: { value: string };
-        shortName?: { value: string };
-      };
-      submittedName?: Array<{
-        fullName?: { value: string };
-      }>;
-    };
-    sequence: {
-      value: string;
-      length: number;
-    };
-    organism: {
-      scientificName: string;
-    };
-  }>;
-}
-
-// Type for AlphaFold API response
-interface AlphaFoldResponse {
+interface AlphaFoldPrediction {
   entryId: string;
-  confidenceScore: number;
-  experimentalMethod: string;
-  resolution?: number;
+  pdbUrl: string;
   cifUrl: string;
+  bcifUrl: string;
+  uniprotAccession: string;
+  uniprotDescription: string;
+  organismScientificName: string;
+  modelCreatedDate: string;
+  latestVersion: number;
 }
 
-export const api = {
-  /**
-   * Search for proteins using UniProt API
-   * @param query Search query string
-   * @param limit Number of results to return (default: 10)
-   * @returns Promise<Protein[]>
-   * @throws ApiError
-   */
-  async searchProteins(query: string, limit: number = 10): Promise<Protein[]> {
+export class APIService {
+  private storage: StorageService;
+  private worker: Worker;
+  private CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+  private BASE_URL = 'https://rest.uniprot.org/uniprotkb';
+  private ALPHAFOLD_API_URL = 'https://alphafold.ebi.ac.uk/api';
+  private ALPHAFOLD_FILES_URL = 'https://alphafold.ebi.ac.uk/files';
+
+  constructor() {
+    this.storage = new StorageService();
+    this.worker = new Worker(
+      new URL('../workers/structureProcessor.worker.ts', import.meta.url)
+    );
+    this.initializeServices();
+  }
+
+  private async initializeServices() {
+    await this.storage.initDB();
+    this.setupWorkerListeners();
+  }
+
+  private setupWorkerListeners() {
+    this.worker.addEventListener('message', (event) => {
+      const { type, data, error } = event.data;
+      if (error) {
+        console.error('Worker error:', error);
+      }
+    });
+  }
+
+  async searchProteins(query: string): Promise<Protein[]> {
+    // Try cache first
     try {
-      const response = await axios.get<UniProtResponse>(`${UNIPROT_API}/search`, {
+      const cached = await this.storage.getSearchResults(query);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+        return cached.results;
+      }
+    } catch (error) {
+      console.warn('Cache read failed:', error);
+    }
+
+    // Fetch from UniProt API if not in cache
+    try {
+      const response = await axios.get(`${this.BASE_URL}/search`, {
         params: {
-          query,
+          query: query,
           format: 'json',
-          fields: 'id,protein_name,organism_name,sequence,length,gene_names,structure_3d',
-          size: limit
-        },
-        timeout: 5000 // 5 second timeout
+          fields: 'accession,id,protein_name,organism_name,length,sequence,gene_names',
+          size: 10
+        }
       });
 
-      return response.data.results.map((item): Protein => ({
-        id: item.primaryAccession,
-        name: item.protein.recommendedName?.fullName?.value || 
-              item.protein.submittedName?.[0]?.fullName?.value || 
-              'Unknown protein',
-        description: item.protein.recommendedName?.shortName?.value || '',
-        sequence: item.sequence.value,
-        length: item.sequence.length,
-        organism: item.organism.scientificName,
-        uniprotId: item.primaryAccession
-      }));
+      if (!response.data || !response.data.results) {
+        throw new Error('Invalid response format from UniProt API');
+      }
+
+      // Transform UniProt response to our Protein format with proper null checks
+      const proteins: Protein[] = response.data.results.map((item: any) => {
+        // Get protein name with fallbacks
+        const proteinName = 
+          item.proteinDescription?.recommendedName?.fullName?.value ||
+          item.proteinDescription?.submittedName?.[0]?.fullName?.value ||
+          item.proteinDescription?.alternativeName?.[0]?.fullName?.value ||
+          item.gene_names?.[0] ||
+          'Unknown Protein';
+
+        // Get description with fallback
+        const description = 
+          item.proteinDescription?.recommendedName?.fullName?.value ||
+          item.proteinDescription?.submittedName?.[0]?.fullName?.value ||
+          '';
+
+        // Ensure we have a valid UniProt ID
+        const uniprotId = item.primaryAccession || item.accession || item.id;
+
+        return {
+          id: uniprotId,
+          uniprotId: uniprotId,
+          name: proteinName,
+          description: description,
+          length: item.sequence?.length || 0,
+          organism: item.organism?.scientificName || 'Unknown Organism',
+          sequence: item.sequence?.value || ''
+        };
+      });
+
+      // Save to cache
+      await this.storage.saveSearchResults(query, proteins);
+
+      return proteins;
     } catch (error) {
+      console.error('Search error:', error);
       if (axios.isAxiosError(error)) {
-        throw new ApiError(
-          `Failed to search proteins: ${error.message}`,
-          error.response?.status,
-          error.response?.data
+        throw new Error(
+          error.response?.data?.message || 'Failed to search proteins'
         );
       }
-      throw new ApiError('Failed to search proteins: Unknown error');
-    }
-  },
-
-  /**
-   * Get structure data for a protein using AlphaFold API
-   * @param uniprotId UniProt ID of the protein
-   * @returns Promise<StructureData>
-   * @throws ApiError
-   */
-  async getStructure(uniprotId: string): Promise<StructureData> {
-    try {
-      // First, check if the structure exists
-      const metadataResponse = await axios.get<AlphaFoldResponse>(
-        `${ALPHAFOLD_API}/prediction/${uniprotId}`,
-        { timeout: 5000 }
-      );
-
-      const cifUrl = `${ALPHAFOLD_API}/prediction/download/${uniprotId}?format=cif`;
-      
-      // Verify the CIF file is accessible
-      await axios.head(cifUrl);
-
-      return {
-        pdbId: uniprotId,
-        resolution: metadataResponse.data.resolution || 0,
-        experimentalMethod: 'AlphaFold3 Prediction',
-        confidenceScore: metadataResponse.data.confidenceScore,
-        coordinates: cifUrl,
-        lastUpdated: new Date().toISOString()
-      };
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 404) {
-          throw new ApiError(
-            `No structure found for protein ${uniprotId}`,
-            404
-          );
-        }
-        throw new ApiError(
-          `Failed to get structure: ${error.message}`,
-          error.response?.status,
-          error.response?.data
-        );
-      }
-      throw new ApiError('Failed to get structure: Unknown error');
-    }
-  },
-
-  /**
-   * Check if the APIs are accessible
-   * @returns Promise<boolean>
-   */
-  async checkApiStatus(): Promise<{ alphafold: boolean; uniprot: boolean }> {
-    try {
-      const [alphafoldStatus, uniprotStatus] = await Promise.all([
-        axios.head(ALPHAFOLD_API).then(() => true).catch(() => false),
-        axios.head(UNIPROT_API).then(() => true).catch(() => false)
-      ]);
-
-      return {
-        alphafold: alphafoldStatus,
-        uniprot: uniprotStatus
-      };
-    } catch {
-      return {
-        alphafold: false,
-        uniprot: false
-      };
+      throw error;
     }
   }
-};
 
-// Export types for use in other files
-export type { Protein, StructureData };
+  async getProteinStructure(uniprotId: string): Promise<any> {
+    try {
+      // Check cache first
+      const cached = await this.storage.getStructure(uniprotId);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+        return cached.data;
+      }
+
+      // First try to get metadata from AlphaFold API
+      const metadataUrl = `${this.ALPHAFOLD_API_URL}/prediction/${uniprotId}`;
+      const metadataResponse = await axios.get(metadataUrl, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!metadataResponse.data || !Array.isArray(metadataResponse.data) || metadataResponse.data.length === 0) {
+        throw new Error('No structure prediction available');
+      }
+
+      // Get the PDB file URL from metadata
+      const prediction = metadataResponse.data[0];
+      const pdbUrl = prediction.pdbUrl || `${this.ALPHAFOLD_FILES_URL}/AF-${uniprotId}-F1-model_v4.pdb`;
+
+      // Get the actual PDB file
+      const response = await axios.get(pdbUrl, {
+        responseType: 'text',
+        headers: {
+          'Accept': 'text/plain'
+        }
+      });
+
+      if (!response.data || response.data.trim() === '') {
+        throw new Error('Received empty PDB data from AlphaFold');
+      }
+
+      // Process PDB data
+      const pdbData = response.data;
+      
+      // Basic validation
+      if (!pdbData.includes('ATOM') && !pdbData.includes('HETATM')) {
+        throw new Error('Invalid PDB file format');
+      }
+
+      // Clean up PDB data
+      const cleanedPdb = pdbData
+        .split('\n')
+        .filter((line: string) => line.trim().length > 0)
+        .map((line: string) => {
+          // Ensure proper line length
+          if (line.length < 80) {
+            return line.padEnd(80);
+          }
+          return line;
+        })
+        .join('\n');
+
+      const data = {
+        pdbId: uniprotId,
+        experimentalMethod: 'AlphaFold Prediction',
+        confidenceScore: prediction.confidenceScore || 100,
+        coordinates: cleanedPdb,
+        metadata: {
+          modelCreatedDate: prediction.modelCreatedDate,
+          source: 'AlphaFold DB',
+          version: prediction.latestVersion || 4,
+          organism: prediction.organismScientificName
+        }
+      };
+
+      // Save to cache
+      await this.storage.saveStructure(uniprotId, data);
+
+      return data;
+    } catch (error) {
+      console.error('Structure fetch error:', error);
+      
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 404) {
+          throw new Error(`No structure available for protein ${uniprotId}`);
+        }
+        if (status === 422) {
+          throw new Error(`Invalid UniProt ID: ${uniprotId}`);
+        }
+        throw new Error(
+          'Failed to fetch protein structure. This protein may not have a predicted structure available.'
+        );
+      }
+      
+      throw error;
+    }
+  }
+}
+
+export const api = new APIService();
