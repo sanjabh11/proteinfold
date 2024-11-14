@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import ProteinViewer from '../components/ProteinViewer';
 import AnnotationViewer from '../components/AnnotationViewer';
+import SequenceViewer from '../components/SequenceViewer';
+import BlastSearch from '../components/BlastSearch';
 import { Loader2 } from 'lucide-react';
 
 const ProteinDetail: React.FC = () => {
@@ -14,6 +16,13 @@ const ProteinDetail: React.FC = () => {
   const { data: structure, isLoading, error } = useQuery({
     queryKey: ['structure', id],
     queryFn: () => api.getProteinStructure(id!),
+    enabled: !!id
+  });
+
+  // Fetch protein data including sequence and features
+  const { data: proteinData } = useQuery({
+    queryKey: ['proteinData', id],
+    queryFn: () => api.getProteinInfo(id!), // Assuming this API call fetches the protein sequence and features
     enabled: !!id
   });
 
@@ -74,6 +83,22 @@ const ProteinDetail: React.FC = () => {
             <div className="border-t mt-6">
               <AnnotationViewer uniprotId={structure.pdbId} />
             </div>
+
+            {/* Sequence Viewer */}
+            <div className="mt-6">
+              <SequenceViewer 
+                uniprotId={structure.pdbId} 
+                sequence={proteinData?.sequence} 
+                features={proteinData?.features} 
+              />
+            </div>
+
+            {/* BLAST Search */}
+            {proteinData?.sequence && (
+              <div className="mt-6">
+                <BlastSearch sequence={proteinData.sequence} />
+              </div>
+            )}
           </div>
         </div>
       </div>

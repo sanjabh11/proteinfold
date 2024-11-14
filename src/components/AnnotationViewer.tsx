@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { uniprotService } from '../services/uniprotService';
+// src/components/AnnotationViewer.tsx
+import React, { useState, useEffect, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
+import { uniprotService } from '../services/uniprotService';
 
 interface AnnotationViewerProps {
   uniprotId: string;
@@ -13,12 +14,14 @@ const AnnotationViewer: React.FC<AnnotationViewerProps> = ({ uniprotId }) => {
 
   useEffect(() => {
     const fetchAnnotations = async () => {
+      if (!uniprotId) return;
       try {
         setLoading(true);
         setError(null);
         const data = await uniprotService.getAnnotations(uniprotId);
         setAnnotations(data);
       } catch (err) {
+        console.error('Error fetching annotations:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch annotations');
       } finally {
         setLoading(false);
@@ -27,6 +30,17 @@ const AnnotationViewer: React.FC<AnnotationViewerProps> = ({ uniprotId }) => {
 
     fetchAnnotations();
   }, [uniprotId]);
+
+  const groupedAnnotations = useMemo(() => {
+    return annotations.reduce((acc, annotation) => {
+      const type = annotation.type;
+      if (!acc[type]) {
+        acc[type] = [];
+      }
+      acc[type].push(annotation);
+      return acc;
+    }, {} as Record<string, typeof annotations>);
+  }, [annotations]);
 
   if (loading) {
     return (
@@ -38,36 +52,45 @@ const AnnotationViewer: React.FC<AnnotationViewerProps> = ({ uniprotId }) => {
 
   if (error) {
     return (
-      <div className="text-red-500 p-4">
-        Error: {error}
-      </div>
+      <div className="p-4 text-red-600">Error loading annotations: {error}</div>
     );
   }
 
   return (
-    <div className="space-y-2 p-4">
-      <h3 className="text-lg font-semibold mb-4">Protein Annotations</h3>
-      {annotations.map((annotation, index) => (
-        <div 
-          key={index}
-          className="bg-white p-3 rounded-lg shadow-sm border border-gray-200"
-        >
-          <div className="flex justify-between items-start">
-            <span className="font-medium text-gray-700">{annotation.type}</span>
-            <span className="text-sm text-gray-500">
-              {annotation.location.start}-{annotation.location.end}
-            </span>
+    <div className="annotations-container p-4">
+      <h3 className="text-xl font-bold mb-6">Protein Annotations</h3>
+      <div className="space-y-6">
+        {Object.entries(groupedAnnotations).map(([type, items]) => (
+          <div key={type} className="annotation-group">
+            <h4 className="text-lg font-semibold mb-2">{type}</h4>
+            <div className="ml-4 space-y-2">
+              {items.map((annotation, index) => {
+                // Skip rendering if there's no meaningful description
+                if (annotation.description === 'No description available' && 
+                    !annotation.location.start && 
+                    !annotation.location.end) {
+                  return null;
+                }
+
+                return (
+                  <div key={`${type}-${index}`} className="annotation-item">
+                    {annotation.description !== 'No description available' && (
+                      <p className="text-gray-800">{annotation.description}</p>
+                    )}
+                    {(annotation.location.start !== 0 || annotation.location.end !== 0) && (
+                      <p className="text-sm text-gray-600">
+                        Position: {annotation.location.start} - {annotation.location.end}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <p className="text-sm text-gray-600 mt-1">{annotation.description}</p>
-          {annotation.evidence && (
-            <p className="text-xs text-gray-500 mt-1">
-              Evidence: {annotation.evidence}
-            </p>
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 };
 
-export default AnnotationViewer; 
+export default AnnotationViewer;
