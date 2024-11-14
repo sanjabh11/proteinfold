@@ -1,5 +1,6 @@
 // src/pages/Search.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { Protein } from '../types';
 
@@ -8,6 +9,7 @@ const Search: React.FC = () => {
   const [proteins, setProteins] = useState<Protein[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,6 +26,12 @@ const Search: React.FC = () => {
       console.error('Search error:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleProteinClick = (protein: Protein) => {
+    if (protein.uniprotId) {
+      navigate(`/protein/${protein.uniprotId}`);
     }
   };
 
@@ -54,24 +62,25 @@ const Search: React.FC = () => {
         </div>
       )}
 
-      {proteins.length > 0 && (
-        <div className="grid gap-4">
-          {proteins.map((protein) => (
-            <div
-              key={protein.id}
-              className="border rounded p-4 hover:bg-gray-50"
-            >
-              <h3 className="text-lg font-semibold">{protein.name}</h3>
-              <p className="text-gray-600">{protein.description}</p>
-              <div className="mt-2 text-sm">
-                <p>Length: {protein.length} amino acids</p>
-                <p>Organism: {protein.organism}</p>
-                <p>UniProt ID: {protein.uniprotId}</p>
-              </div>
+      <div className="grid gap-4">
+        {proteins.map((protein) => (
+          <div
+            key={protein.uniprotId || `protein-${protein.id || Math.random()}`}
+            onClick={() => handleProteinClick(protein)}
+            className="border rounded p-4 hover:bg-gray-50 cursor-pointer"
+          >
+            <h3 className="text-lg font-semibold">{protein.name}</h3>
+            <div className="mt-2 text-sm text-gray-600">
+              <p>Length: {protein.length} amino acids</p>
+              <p>Organism: {protein.organism}</p>
+              <p>UniProt ID: {protein.uniprotId}</p>
+              {protein.description && (
+                <p className="mt-1">{protein.description}</p>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
 
       {!loading && !error && proteins.length === 0 && query && (
         <p className="text-gray-600">No results found for "{query}"</p>
