@@ -1,20 +1,21 @@
 // src/types/protein.ts
-
-
-export interface UniProtResponse {
+export interface AnnotationGroup {
   id: string;
-  protein: {
-    recommendedName?: {
-      fullName?: {
-        value: string;
-      };
-    };
-  };
-  sequence?: {
-    value: string;
-    length: number;
-  };
-  structure?: any;
-  gene_names?: any[];
-  organism_name?: any;
+  name: string;
+  types: string[];
+}
+
+export interface UniProtAnnotation {
+  type: string;
+  location: {
+    start: { value: number };
+    end: { value: number };
+  } | null;
+  description: string;
+  evidence?: string;
+}
+
+export interface LoadingState {
+  isLoading: boolean;
+  error: string | null;
 }

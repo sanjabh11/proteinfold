@@ -4,9 +4,9 @@ import axios from 'axios';
 interface UniProtAnnotation {
   type: string;
   location: {
-    start: number;
-    end: number;
-  };
+    start: { value: number };
+    end: { value: number };
+  } | null;
   description: string;
   evidence?: string;
 }
@@ -16,106 +16,64 @@ export class UniProtService {
 
   async getAnnotations(uniprotId: string): Promise<UniProtAnnotation[]> {
     try {
-      // Using the correct fields parameter format
       const response = await axios.get(`${this.BASE_URL}${uniprotId}`, {
         params: {
-          format: 'json',
-          fields: 'id,protein_name,sequence,features'  // Simplified fields
+          format: 'json'
         }
       });
 
-      if (!response.data) {
-        return [];
-      }
-
-      // Extract and transform features
       const features = response.data.features || [];
-      
-      return features.map((feature: any) => {
-        // Handle different location formats
-        let start = 0;
-        let end = 0;
+      const comments = response.data.comments || [];
+      const annotations: UniProtAnnotation[] = [];
 
-        if (feature.location) {
-          if (feature.location.start && feature.location.end) {
-            start = feature.location.start.value;
-            end = feature.location.end.value;
-          } else if (feature.location.position) {
-            start = feature.location.position.value;
-            end = feature.location.position.value;
-          }
+      // Process features
+      features.forEach((feature: any) => {
+        const locationStart = feature.location?.start?.value;
+        const locationEnd = feature.location?.end?.value;
+        
+        let description = '';
+        if (typeof feature.description === 'string') {
+          description = feature.description;
+        } else if (feature.description?.value) {
+          description = feature.description.value;
+        } else {
+          description = feature.type || 'No description available';
         }
 
-        return {
+        annotations.push({
           type: feature.type || 'Unknown',
-          location: {
-            start,
-            end
-          },
-          description: feature.description || feature.type || 'No description available',
-          evidence: feature.evidences?.length > 0 
-            ? feature.evidences[0].code 
-            : 'Not specified'
-        };
+          location: locationStart && locationEnd ? {
+            start: { value: locationStart },
+            end: { value: locationEnd }
+          } : null,
+          description: description,
+          evidence: feature.evidences?.[0]?.code || 'Not specified'
+        });
       });
 
+      // Process comments
+      comments.forEach((comment: any) => {
+        let description = '';
+        if (comment.text?.[0]?.value) {
+          description = comment.text[0].value;
+        } else if (typeof comment.text === 'string') {
+          description = comment.text;
+        } else {
+          description = comment.type || 'No description available';
+        }
+
+        annotations.push({
+          type: comment.type || 'Unknown',
+          location: null,
+          description: description,
+          evidence: 'Not specified'
+        });
+      });
+
+      return annotations;
     } catch (error) {
       console.error('Error fetching UniProt annotations:', error);
-      
-      // Fallback request with minimal fields
-      try {
-        const basicResponse = await axios.get(`${this.BASE_URL}${uniprotId}`, {
-          params: {
-            format: 'json'
-          }
-        });
-
-        if (basicResponse.data?.features) {
-          return basicResponse.data.features.map((feature: any) => {
-            let start = 0;
-            let end = 0;
-
-            if (feature.begin && feature.end) {
-              start = feature.begin.position;
-              end = feature.end.position;
-            } else if (feature.position) {
-              start = feature.position;
-              end = feature.position;
-            }
-
-            return {
-              type: feature.type || 'Unknown',
-              location: {
-                start,
-                end
-              },
-              description: feature.description || 'No description available',
-              evidence: 'Not specified'
-            };
-          });
-        }
-        
-        return [];
-      } catch (fallbackError) {
-        console.error('Fallback request failed:', fallbackError);
-        return []; // Return empty array instead of throwing
-      }
-    }
-  }
-
-  async getSequence(uniprotId: string): Promise<string> {
-    try {
-      const response = await axios.get(`${this.BASE_URL}${uniprotId}`, {
-        params: {
-          format: 'json',
-          fields: 'sequence'
-        }
-      });
-
-      return response.data?.sequence?.value || '';
-    } catch (error) {
-      console.error('Error fetching sequence:', error);
-      return '';
+      return [];
     }
   }
 }
