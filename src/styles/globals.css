@@ -1,6 +1,7 @@
 @import './components/LoadingSpinner.css';
 @import './components/ErrorMessage.css';
 @import './components/AnnotationViewer.css';
+@import './theme.css';
 
 .sequence-viewer {
   background-color: #ffffff;
