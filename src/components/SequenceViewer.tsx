@@ -34,41 +34,13 @@ const SequenceViewer: React.FC<SequenceViewerProps> = ({
   const [selectedAminoAcid, setSelectedAminoAcid] = useState<string | null>(null);
   const [showProperties, setShowProperties] = useState(false);
 
-  const chunkSize = 60; // Number of amino acids per line
+  const chunkSize = 50; // Example chunk size
 
   useEffect(() => {
-    if (!sequence) {
-      fetchSequence();
-    } else {
-      processSequence(sequence);
+    if (initialSequence) {
+      processSequence(initialSequence);
     }
-  }, [sequence]);
-
-  const fetchSequence = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `https://rest.uniprot.org/uniprotkb/${uniprotId}?format=json&fields=sequence`
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      if (data.sequence?.value) {
-        setSequence(data.sequence.value);
-        processSequence(data.sequence.value);
-      } else {
-        throw new Error('No sequence data found');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch sequence');
-      console.error('Error fetching sequence:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [initialSequence]);
 
   const processSequence = (seq: string) => {
     const newChunks: SequenceChunk[] = [];

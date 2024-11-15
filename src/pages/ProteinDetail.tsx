@@ -6,46 +6,45 @@ import { api } from '../services/api';
 import ProteinViewer from '../components/ProteinViewer';
 import AnnotationViewer from '../components/AnnotationViewer';
 import SequenceViewer from '../components/SequenceViewer';
-import BlastSearch from '../components/BlastSearch';
-import { Loader2 } from 'lucide-react';
 
 const ProteinDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [viewerStyle, setViewerStyle] = useState('cartoon');
 
-  const { data: structure, isLoading, error } = useQuery({
+  // Fetch structure and protein data
+  const { data: structure, isLoading: structureLoading, error: structureError } = useQuery({
     queryKey: ['structure', id],
     queryFn: () => api.getProteinStructure(id!),
     enabled: !!id
   });
 
-  // Fetch protein data including sequence and features
-  const { data: proteinData } = useQuery({
+  const { data: proteinData, isLoading: proteinLoading } = useQuery({
     queryKey: ['proteinData', id],
-    queryFn: () => api.getProteinInfo(id!), // Assuming this API call fetches the protein sequence and features
+    queryFn: () => api.getProteinInfo(id!),
     enabled: !!id
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <Loader2 className="h-12 w-12 animate-spin text-blue-500" />
-      </div>
-    );
-  }
+  // Handle loading and error states
+  if (structureLoading || proteinLoading) return <div>Loading...</div>;
+  if (structureError) return <div>Error loading protein structure.</div>;
 
-  if (error) {
-    return (
-      <div className="container mx-auto p-4">
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-          <p className="font-bold">Error loading structure</p>
-          <p>{error instanceof Error ? error.message : 'Unknown error'}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!structure) return null;
+  // Download function
+  const handleDownload = async (format: 'pdb' | 'mmcif') => {
+    try {
+      const response = await fetch(`https://alphafold.ebi.ac.uk/files/AF-${id}-F1-model_v4.${format}`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${id}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+    }
+  };
 
   return (
     <div className="container mx-auto p-4">
@@ -56,7 +55,29 @@ const ProteinDetail: React.FC = () => {
             <p className="text-gray-600">UniProt ID: {structure.pdbId}</p>
             <p className="text-gray-600">Method: {structure.experimentalMethod}</p>
           </div>
-          
+
+          {/* Download buttons */}
+          <div className="mb-4 flex gap-2">
+            <button
+              onClick={() => handleDownload('pdb')}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download PDB
+            </button>
+            <button
+              onClick={() => handleDownload('mmcif')}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download mmCIF
+            </button>
+          </div>
+
           {/* Viewer Controls */}
           <div className="mb-4 flex gap-2">
             <select
@@ -72,33 +93,26 @@ const ProteinDetail: React.FC = () => {
           </div>
 
           {/* 3D Viewer */}
-          <div className="relative">
+          {structure && (
             <ProteinViewer 
               pdbData={structure.coordinates} 
               style={{ height: '600px' }}
               viewerStyle={viewerStyle}
             />
-            
-            {/* Annotations Section */}
-            <div className="border-t mt-6">
-              <AnnotationViewer uniprotId={structure.pdbId} />
-            </div>
+          )}
 
-            {/* Sequence Viewer */}
-            <div className="mt-6">
-              <SequenceViewer 
-                uniprotId={structure.pdbId} 
-                sequence={proteinData?.sequence} 
-                features={proteinData?.features} 
-              />
-            </div>
+          {/* Sequence Viewer */}
+          <div className="mt-6">
+            <SequenceViewer 
+              uniprotId={id!}
+              sequence={proteinData?.sequence}
+              features={proteinData?.features}
+            />
+          </div>
 
-            {/* BLAST Search */}
-            {proteinData?.sequence && (
-              <div className="mt-6">
-                <BlastSearch sequence={proteinData.sequence} />
-              </div>
-            )}
+          {/* Annotations Section */}
+          <div className="mt-6">
+            <AnnotationViewer uniprotId={id!} />
           </div>
         </div>
       </div>

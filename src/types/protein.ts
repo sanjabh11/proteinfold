@@ -1,4 +1,16 @@
 // src/types/protein.ts
+export interface StyleOptions {
+  representation: 'cartoon' | 'surface' | 'ball-and-stick' | 'ribbon';
+  colorScheme: 'chainid' | 'residue' | 'secondary-structure' | 'custom';
+  opacity: number;
+}
+
+export interface ChainInfo {
+  id: string;
+  description: string;
+  visible: boolean;
+  color: string;
+}
 export interface AnnotationGroup {
   id: string;
   name: string;

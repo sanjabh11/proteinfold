@@ -209,6 +209,28 @@ export class APIService {
       throw error;
     }
   }
+
+  async getProteinInfo(uniprotId: string) {
+    try {
+      const response = await axios.get(`${this.BASE_URL}/${uniprotId}`, {
+        params: {
+          format: 'json',
+          fields: 'id,sequence,organism_name,length,feature_count,protein_name'
+        }
+      });
+
+      return {
+        sequence: response.data.sequence?.value,
+        organism: response.data.organism?.scientificName,
+        length: response.data.sequence?.length,
+        name: response.data.proteinDescription?.recommendedName?.fullName?.value || response.data.proteinName,
+        features: response.data.features || []
+      };
+    } catch (error) {
+      console.error('Error fetching protein metadata:', error);
+      throw error;
+    }
+  }
 }
 
 export const api = new APIService();
