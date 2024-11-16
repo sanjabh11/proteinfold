@@ -1,6 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as NGL from 'ngl';
 import { Loader2, Pause, Play, Tag, Ruler, Layers } from 'lucide-react';
+import { MeasurementTools } from './StructureAnalysis/MeasurementTools';
+import { Measurement } from '../types/measurements';
 
 interface ProteinViewerProps {
   pdbData: string;
@@ -11,6 +13,7 @@ interface ProteinViewerProps {
   showLabels?: boolean;
   measurements?: boolean;
   surfaceAnalysis?: boolean;
+  onMeasurement?: (measurement: Measurement) => void;
 }
 
 interface MeasurementState {
@@ -134,7 +137,8 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
   quality = 'medium',
   showLabels = false,
   measurements = false,
-  surfaceAnalysis = false
+  surfaceAnalysis = false,
+  onMeasurement
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
@@ -313,23 +317,24 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
     };
   }, [isSpinning, rotationSpeed]);
 
-  const handleMeasurement = (event: MouseEvent) => {
-    if (!measurementState.active) return;
-
-    const picked = stageRef.current?.pickingProxy(event);
-    if (!picked) return;
-
-    setMeasurementState(prev => ({
-      ...prev,
-      points: [...prev.points, picked.position]
-    }));
-
-    if (measurementState.type === 'distance' && measurementState.points.length === 2) {
-      // Calculate and display distance
-      const distance = calculateDistance(measurementState.points[0], measurementState.points[1]);
-      addDistanceLabel(distance, measurementState.points);
+  const handleMeasurement = useCallback((measurement: Measurement) => {
+    if (onMeasurement) {
+      onMeasurement(measurement);
     }
-  };
+    
+    // Add visual representation of measurement
+    if (measurement.type === 'distance') {
+      const shape = new NGL.Shape('measurement-' + measurement.id);
+      shape.addCylinder(
+        measurement.points[0],
+        measurement.points[1],
+        [0.5, 0.5, 1],
+        0.1
+      );
+      const shapeComp = stageRef.current.addComponentFromObject(shape);
+      shapeComp.addRepresentation('buffer');
+    }
+  }, [onMeasurement]);
 
   const toggleSurfaceAnalysis = () => {
     if (!componentRef.current) return;
@@ -464,6 +469,13 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
             <p className="text-sm">{error}</p>
           </div>
         </div>
+      )}
+      
+      {stageRef.current && (
+        <MeasurementTools
+          stage={stageRef.current}
+          onMeasurement={handleMeasurement}
+        />
       )}
     </div>
   );
