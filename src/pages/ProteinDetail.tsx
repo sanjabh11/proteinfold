@@ -6,6 +6,8 @@ import { api } from '../services/api';
 import ProteinViewer from '../components/ProteinViewer';
 import AnnotationViewer from '../components/AnnotationViewer';
 import SequenceViewer from '../components/SequenceViewer';
+import BlastSearch from '../components/BlastSearch';
+import { Loader2 } from 'lucide-react';
 
 const ProteinDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -93,13 +95,16 @@ const ProteinDetail: React.FC = () => {
           </div>
 
           {/* 3D Viewer */}
-          {structure && (
-            <ProteinViewer 
-              pdbData={structure.coordinates} 
-              style={{ height: '600px' }}
-              viewerStyle={viewerStyle}
-            />
-          )}
+          <ProteinViewer 
+            pdbData={structure.coordinates} 
+            style={{ height: '600px' }}
+            viewerStyle={viewerStyle}
+          />
+          
+          {/* Annotations Section */}
+          <div className="border-t mt-6">
+            <AnnotationViewer uniprotId={id!} />
+          </div>
 
           {/* Sequence Viewer */}
           <div className="mt-6">
@@ -110,10 +115,12 @@ const ProteinDetail: React.FC = () => {
             />
           </div>
 
-          {/* Annotations Section */}
-          <div className="mt-6">
-            <AnnotationViewer uniprotId={id!} />
-          </div>
+          {/* BLAST Search */}
+          {proteinData?.sequence && (
+            <div className="mt-6">
+              <BlastSearch sequence={proteinData.sequence} />
+            </div>
+          )}
         </div>
       </div>
     </div>
