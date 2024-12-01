@@ -62,6 +62,26 @@ const ProteinDetail: React.FC = () => {
     }
   }, [id]);
 
+  // Update test annotations with residue ranges that exist in P06213
+  const testAnnotations = [
+    {
+      id: '1',
+      label: 'Tyrosine Kinase Domain',
+      residueRange: [980, 1000],
+      type: 'active-site',
+      description: 'Key catalytic domain responsible for phosphorylation',
+      color: '#FFD700'
+    },
+    {
+      id: '2',
+      label: 'ATP Binding Site',
+      residueRange: [1003, 1023],
+      type: 'binding-site',
+      description: 'ATP binding pocket essential for kinase activity',
+      color: '#00FF00'
+    }
+  ];
+
   if (structureLoading || proteinLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -120,9 +140,13 @@ const ProteinDetail: React.FC = () => {
             </select>
           </div>
 
-          {/* Protein Viewer */}
+          {/* Protein Viewer with annotations */}
           <ProteinViewer 
-            pdbData={structure.coordinates} 
+            pdbData={structure.coordinates}
+            annotations={testAnnotations}
+            onAnnotationClick={(annotation) => {
+              console.log('Clicked annotation:', annotation);
+            }}
             style={{ height: '600px' }}
             viewerStyle={viewerStyle}
             onMeasurement={handleMeasurement}

@@ -1,20 +1,20 @@
 // src/components/StructureAnalysis/MeasurementTools.tsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Point3D, Measurement } from '../../types/measurements';
 import './MeasurementTools.css';
 
 interface MeasurementToolsProps {
   stage: any;
-  onMeasurement: (measurement: Measurement) => void;
+  onMeasurement?: (measurement: Measurement) => void;
 }
 
 export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
   stage,
-  onMeasurement,
+  onMeasurement
 }) => {
   const [measurementState, setMeasurementState] = useState({
     active: false,
-    type: 'distance' as 'distance' | 'angle' | 'surface',
+    type: 'distance' as const,
     points: [] as Point3D[],
     measurements: [] as Measurement[]
   });
@@ -57,7 +57,7 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
   }, [calculateDistance]);
 
   const handleAtomPick = useCallback((pickingProxy: any) => {
-    if (!measurementState.active || !pickingProxy) return;
+    if (!measurementState.active || !pickingProxy?.position) return;
 
     const point: Point3D = {
       x: pickingProxy.position.x,
@@ -68,8 +68,6 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
     setMeasurementState(prev => {
       const newPoints = [...prev.points, point];
       
-      let newMeasurement: Measurement | null = null;
-
       if ((prev.type === 'distance' && newPoints.length === 2) ||
           (prev.type === 'angle' && newPoints.length === 3) ||
           (prev.type === 'surface' && newPoints.length === 3)) {
@@ -87,7 +85,7 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
             break;
         }
 
-        newMeasurement = {
+        const measurement: Measurement = {
           id: `${prev.type}-${Date.now()}`,
           type: prev.type,
           points: newPoints,
@@ -95,14 +93,12 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
           label: `${value.toFixed(2)}${prev.type === 'angle' ? '°' : prev.type === 'surface' ? ' Å²' : ' Å'}`
         };
 
-        if (newMeasurement) {
-          onMeasurement(newMeasurement);
-        }
+        onMeasurement?.(measurement);
 
         return {
           ...prev,
           points: [],
-          measurements: [...prev.measurements, newMeasurement]
+          measurements: [...prev.measurements, measurement]
         };
       }
 
@@ -110,7 +106,7 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
     });
   }, [measurementState.active, calculateDistance, calculateAngle, calculateSurfaceArea, onMeasurement]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!stage) return;
 
     const handlePick = (pickingProxy: any) => {
@@ -120,7 +116,9 @@ export const MeasurementTools: React.FC<MeasurementToolsProps> = ({
     };
 
     stage.signals.clicked.add(handlePick);
-    return () => stage.signals.clicked.remove(handlePick);
+    return () => {
+      stage.signals.clicked.remove(handlePick);
+    };
   }, [stage, measurementState.active, handleAtomPick]);
 
   return (

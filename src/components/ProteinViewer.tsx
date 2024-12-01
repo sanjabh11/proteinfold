@@ -1,8 +1,11 @@
+// src/components/ProteinViewer.tsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as NGL from 'ngl';
 import { Loader2, Pause, Play, Tag, Ruler, Layers } from 'lucide-react';
 import { MeasurementTools } from './StructureAnalysis/MeasurementTools';
 import { Measurement } from '../types/measurements';
+import { AnnotationOverlay } from './AnnotationOverlay';
+import './ProteinViewer.css';
 
 interface ProteinViewerProps {
   pdbData: string;
@@ -14,6 +17,15 @@ interface ProteinViewerProps {
   measurements?: boolean;
   surfaceAnalysis?: boolean;
   onMeasurement?: (measurement: Measurement) => void;
+  annotations?: Array<{
+    id: string;
+    label: string;
+    residueRange: [number, number];
+    type: string;
+    description: string;
+    color?: string;
+  }>;
+  onAnnotationClick?: (annotation: any) => void;
 }
 
 interface MeasurementState {
@@ -138,15 +150,15 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
   showLabels = false,
   measurements = false,
   surfaceAnalysis = false,
-  onMeasurement
+  onMeasurement,
+  annotations,
+  onAnnotationClick
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
   const componentRef = useRef<any>(null);
-  const controlsRef = useRef<CustomMouseControls | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSpinning, setIsSpinning] = useState(false);
   const animationRef = useRef<number | null>(null);
   const [currentColorScheme, setCurrentColorScheme] = useState(colorScheme);
   const [currentQuality, setCurrentQuality] = useState(quality);
@@ -158,7 +170,60 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
     points: []
   });
   const [surfaceVisible, setSurfaceVisible] = useState(false);
+  const [mouseState, setMouseState] = useState({
+    x: 0,
+    y: 0,
+    moving: false,
+    buttons: 0
+  });
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [animationSpeed, setAnimationSpeed] = useState(0.5);
 
+  const handleMouseMove = useCallback((event: MouseEvent) => {
+    if (!stageRef.current?.viewer?.controls) return;
+
+    event.preventDefault();
+    if (mouseState.moving && mouseState.buttons > 0) {
+      const deltaX = event.clientX - mouseState.x;
+      const deltaY = event.clientY - mouseState.y;
+      
+      const controls = stageRef.current.viewer.controls;
+      if (mouseState.buttons === 1) {
+        controls.rotate(deltaX * 0.005, deltaY * 0.005);
+      } else if (mouseState.buttons === 2) {
+        controls.zoom(deltaY * 0.1);
+      } else if (mouseState.buttons === 4) {
+        controls.translate(deltaX, deltaY, 0);
+      }
+    }
+
+    setMouseState(prev => ({
+      ...prev,
+      x: event.clientX,
+      y: event.clientY
+    }));
+  }, [mouseState]);
+
+  const handleMouseDown = (event: MouseEvent) => {
+    event.preventDefault();
+    setMouseState(prev => ({
+      ...prev,
+      buttons: event.buttons,
+      moving: true,
+      x: event.clientX,
+      y: event.clientY
+    }));
+  };
+
+  const handleMouseUp = () => {
+    setMouseState(prev => ({
+      ...prev,
+      buttons: 0,
+      moving: false
+    }));
+  };
+
+  // Modify the initialization effect
   useEffect(() => {
     let mounted = true;
     let stage: any = null;
@@ -175,6 +240,12 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
         setLoading(true);
         setError(null);
 
+        // Clean PDB data before loading
+        const cleanedPDB = pdbData
+          .split('\n')
+          .filter(line => line.trim().length > 0)
+          .join('\n');
+
         // Create NGL Stage with updated parameters
         stage = new NGL.Stage(containerRef.current, {
           backgroundColor: 'white',
@@ -190,22 +261,27 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
           sampleLevel: currentQuality === 'high' ? 2 : currentQuality === 'medium' ? 1 : 0
         });
 
+        // Initialize controls
+        stage.mouseControls.add('drag-rotate', () => true);
+        stage.mouseControls.add('scroll-zoom', () => true);
+        stage.mouseControls.add('drag-pan', () => true);
+
         // Wait for stage initialization
         await new Promise(resolve => setTimeout(resolve, 100));
 
         stageRef.current = stage;
         
         // Initialize custom controls after stage is ready
-        controlsRef.current = new CustomMouseControls(stage);
-        cleanup = controlsRef.current.initEventListeners();
+        const controls = new CustomMouseControls(stage);
+        cleanup = controls.initEventListeners();
 
-        // Create a blob URL for the PDB data
-        const blob = new Blob([pdbData], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
+        // Create a blob with the cleaned PDB data
+        const blob = new Blob([cleanedPDB], { type: 'text/plain' });
+        const file = new File([blob], 'structure.pdb', { type: 'text/plain' });
 
         try {
           // Load structure with specific parameters
-          const component = await stage.loadFile(url, { 
+          const component = await stage.loadFile(file, { 
             ext: 'pdb',
             firstModelOnly: true,
             asTrajectory: false
@@ -222,6 +298,7 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
             showLabels: showingLabels ? 'all' : 'none'
           };
 
+          // Add main structure representation
           switch (viewerStyle) {
             case 'surface':
               componentRef.current.addRepresentation('surface', {
@@ -251,23 +328,39 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
               });
           }
 
-          // Add labels if enabled
-          if (showingLabels) {
-            componentRef.current.addRepresentation('label', {
-              sele: 'backbone',
-              color: '#000000',
-              name: 'residue',
-              labelType: 'residue'
+          // Add annotation highlights if there are annotations
+          if (annotations && annotations.length > 0) {
+            annotations.forEach(annotation => {
+              const [startResidue, endResidue] = annotation.residueRange;
+              const selectionString = `${startResidue}-${endResidue}:A`;
+
+              // Add highlight representation for the annotation
+              componentRef.current.addRepresentation(viewerStyle === 'surface' ? 'surface' : 'cartoon', {
+                sele: selectionString,
+                color: annotation.color || '#FFD700',
+                opacity: viewerStyle === 'surface' ? 0.7 : 1,
+                quality: currentQuality
+              });
+
+              // Add ball+stick representation for better visibility
+              componentRef.current.addRepresentation('ball+stick', {
+                sele: selectionString + ' and sidechainAttached',
+                color: annotation.color || '#FFD700',
+                aspectRatio: 1.5,
+                multipleBond: true,
+                quality: currentQuality
+              });
             });
           }
 
           componentRef.current.autoView();
           setLoading(false);
-        } finally {
-          URL.revokeObjectURL(url);
+        } catch (err) {
+          console.error('Error loading structure:', err);
+          throw new Error('Failed to load structure file');
         }
       } catch (err) {
-        console.error('Error loading structure:', err);
+        console.error('Error initializing viewer:', err);
         if (mounted) {
           setError(err instanceof Error ? err.message : 'Failed to load structure');
           setLoading(false);
@@ -284,38 +377,49 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
         stageRef.current.dispose();
         stageRef.current = null;
       }
-    };
-  }, [pdbData, viewerStyle, currentColorScheme, currentQuality, showingLabels]);
-
-  // Update animation with speed control
-  useEffect(() => {
-    if (!stageRef.current?.viewer?.controls) return;
-
-    const animate = () => {
-      const controls = stageRef.current?.viewer?.controls;
-      if (stageRef.current && isSpinning && controls) {
-        controls.rotate(rotationSpeed, 0);
-        stageRef.current.viewer.requestRender();
-        animationRef.current = requestAnimationFrame(animate);
-      }
-    };
-
-    if (isSpinning) {
-      animate();
-    } else {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
+      }
+    };
+  }, [pdbData, viewerStyle, currentColorScheme, currentQuality, showingLabels]);
+
+  // Separate animation effect
+  useEffect(() => {
+    if (!stageRef.current) return;
+
+    let animationId: number | null = null;
+    const stage = stageRef.current;
+
+    const animate = () => {
+      if (isAnimating && stage) {
+        stage.spinAnimation.axis.set(0, 1, 0);
+        stage.spinAnimation.angle = animationSpeed;
+        stage.viewer.requestRender();
+        animationId = requestAnimationFrame(animate);
+      }
+    };
+
+    if (isAnimating) {
+      stage.setParameters({ impostor: true });
+      stage.spinAnimation.axis.set(0, 1, 0);
+      animate();
+    } else {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+      if (stage.spinAnimation) {
+        stage.spinAnimation.angle = 0;
       }
     }
 
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-        animationRef.current = null;
+      if (animationId) {
+        cancelAnimationFrame(animationId);
       }
     };
-  }, [isSpinning, rotationSpeed]);
+  }, [isAnimating, animationSpeed]);
 
   const handleMeasurement = useCallback((measurement: Measurement) => {
     if (onMeasurement) {
@@ -351,41 +455,152 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
     setSurfaceVisible(!surfaceVisible);
   };
 
+  const handleAnnotationClick = useCallback((annotation: any) => {
+    if (!componentRef.current || !stageRef.current) return;
+
+    // Get the residue range
+    const [startResidue, endResidue] = annotation.residueRange;
+    const selectionString = `${startResidue}-${endResidue}:A`;
+
+    // Center view on the selected residues
+    componentRef.current.autoView(selectionString, 2000);
+
+    // Create a temporary highlight effect
+    const shape = new NGL.Shape('highlight-' + annotation.id);
+    const selection = new NGL.Selection(selectionString);
+    const atoms = componentRef.current.structure.getAtomSetWithinSelection(selection);
+    const positions = atoms.atomCenter();
+    
+    shape.addSphere(positions, [1, 0.8, 0], 3);
+    const shapeComp = stageRef.current.addComponentFromObject(shape);
+    shapeComp.addRepresentation('buffer');
+
+    // Remove highlight after animation
+    setTimeout(() => {
+      stageRef.current?.removeComponent(shapeComp);
+    }, 2000);
+
+    // Call the onAnnotationClick callback if provided
+    if (onAnnotationClick) {
+      onAnnotationClick(annotation);
+    }
+  }, [onAnnotationClick]);
+
+  useEffect(() => {
+    if (!stageRef.current || !annotations) return;
+
+    const stage = stageRef.current;
+    
+    // Add picking event handler
+    const pickingProxy = stage.mouseControls.add('clickPick-left', (stage: any, pickingProxy: any) => {
+      if (pickingProxy && annotations) {
+        const residueIndex = pickingProxy.getResidueIndex();
+        // Find if the clicked residue is part of any annotation
+        const clickedAnnotation = annotations.find(
+          annotation => residueIndex >= annotation.residueRange[0] && 
+                       residueIndex <= annotation.residueRange[1]
+        );
+        
+        if (clickedAnnotation) {
+          handleAnnotationClick(clickedAnnotation);
+        }
+      }
+    });
+
+    return () => {
+      if (stage.mouseControls) {
+        stage.mouseControls.remove('clickPick-left');
+      }
+    };
+  }, [annotations, handleAnnotationClick]);
+
   return (
-    <div className="relative">
-      <div
-        ref={containerRef}
-        style={{
-          width: '100%',
-          height: '500px',
-          position: 'relative',
-          ...style
-        }}
-        className="bg-gray-50 rounded-lg overflow-hidden"
-      />
-      
-      {/* Enhanced Controls Panel */}
+    <div 
+      className="protein-viewer-container relative" 
+      style={{ ...style, position: 'relative' }} 
+      ref={containerRef}
+    >
+      {/* Loading indicator */}
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/50">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        </div>
+      )}
+
+      {/* Error message */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/50">
+          <div className="bg-red-100 text-red-700 p-4 rounded-lg shadow">
+            {error}
+          </div>
+        </div>
+      )}
+
+      {/* Annotation information panel */}
+      {annotations && annotations.length > 0 && (
+        <div className="absolute top-4 right-4 bg-white/90 p-4 rounded-lg shadow max-w-xs space-y-2">
+          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+            <Tag className="h-5 w-5" />
+            Annotations
+          </h3>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {annotations.map(annotation => (
+              <button
+                key={annotation.id}
+                onClick={() => handleAnnotationClick(annotation)}
+                className="w-full text-left p-2 rounded hover:bg-gray-100 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <div 
+                    className="w-3 h-3 rounded-full" 
+                    style={{ backgroundColor: annotation.color || '#FFD700' }}
+                  />
+                  <span className="font-medium text-sm">{annotation.label}</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  {annotation.description}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Residues {annotation.residueRange[0]}-{annotation.residueRange[1]}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Controls panel */}
       <div className="absolute bottom-4 left-4 bg-white/90 p-2 rounded-lg shadow space-y-2">
         <div className="flex gap-2">
           <button
-            onClick={() => setIsSpinning(!isSpinning)}
-            className="p-2 rounded hover:bg-gray-100"
-            title={isSpinning ? "Stop Spinning" : "Start Spinning"}
+            onClick={() => setIsAnimating(!isAnimating)}
+            className={`flex items-center gap-2 p-2 rounded ${
+              isAnimating ? 'bg-blue-100' : 'hover:bg-gray-100'
+            }`}
+            title={isAnimating ? "Stop Animation" : "Start Animation"}
           >
-            {isSpinning ? 
-              <Pause className="h-5 w-5" /> : 
-              <Play className="h-5 w-5" />
-            }
+            {isAnimating ? (
+              <>
+                <Pause className="h-5 w-5" />
+                <span>Stop Animation</span>
+              </>
+            ) : (
+              <>
+                <Play className="h-5 w-5" />
+                <span>Start Animation</span>
+              </>
+            )}
           </button>
+          
           <input
             type="range"
-            min="0.001"
-            max="0.05"
-            step="0.001"
-            value={rotationSpeed}
-            onChange={(e) => setRotationSpeed(parseFloat(e.target.value))}
+            min="0.1"
+            max="5.0"
+            step="0.1"
+            value={animationSpeed}
+            onChange={(e) => setAnimationSpeed(parseFloat(e.target.value))}
             className="w-24"
-            title="Rotation Speed"
+            title="Animation Speed"
           />
         </div>
         
@@ -455,21 +670,17 @@ const ProteinViewer: React.FC<ProteinViewerProps> = ({
         </button>
       </div>
       
-      {/* Keep existing loading and error states */}
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/80">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-        </div>
+      {/* Add AnnotationOverlay */}
+      {stageRef.current && componentRef.current && annotations && (
+        <AnnotationOverlay
+          stage={stageRef.current}
+          structure={componentRef.current}
+          annotations={annotations}
+          onAnnotationClick={onAnnotationClick}
+        />
       )}
       
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/80">
-          <div className="text-red-500 text-center p-4">
-            <p className="font-semibold">Error loading structure</p>
-            <p className="text-sm">{error}</p>
-          </div>
-        </div>
-      )}
+      {/* Keep existing loading and error states */}
       
       {stageRef.current && (
         <MeasurementTools
